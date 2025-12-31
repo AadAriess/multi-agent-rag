@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "lms": {
+      "url": "http://localhost:8071/sse"
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["@modelcontextprotocol/server-sequential-thinking", "-y"]
+    }
+  }
+}

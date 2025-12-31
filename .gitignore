@@ -1,0 +1,8 @@
+venv/
+.venv/
+.env
+oriensspace_ai.egg-info/
+app.log
+server_output.log
+scratch/
+QWEN.md

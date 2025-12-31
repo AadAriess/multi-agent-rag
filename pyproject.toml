@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oriensspace-ai"
+version = "0.1.0"
+description = "Platform AI modular untuk berbagai kebutuhan"
+readme = "README.md"
+authors = [{name = "Your Name", email = "your.email@example.com"}]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "python-dotenv",
+    "langchain",
+    "langchain-community",
+    "langchain-core",
+    "langchain-text-splitters",
+    "qdrant-client",
+    "sentence-transformers",
+    "PyPDF2",
+    "python-multipart",
+    "openai",
+    "tiktoken",
+    "instructor",
+    "ollama",
+    "nest_asyncio",
+    "llama-index",
+    "llama-index-vector-stores-milvus",
+    "llama-index-embeddings-ollama",
+    "llama-index-llms-openai-like",
+    "redis",
+    "searxng-wrapper",
+    "pydantic",
+    "pydantic-settings",
+    "sqlalchemy",
+    "pymysql",
+    "alembic",
+    "pymilvus",
+    "langgraph",
+    "cryptography",
+    "langchain-ollama",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[project.scripts]
+start = "run:main"
