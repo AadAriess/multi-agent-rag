@@ -231,6 +231,7 @@ class SearchSpecialistAgent:
     def check_search_memory(self, query: str) -> str:
         """Check search_memory in Milvus for previous search results"""
         try:
+            logger.info(f"\033[94m[CHECKING SEARCH MEMORY]\033[0m Checking search_memory in Milvus for query: {query}")
             # Ambil embedding dari query
             query_embedding = OllamaEmbedding(
                 model_name=settings.embedding_model_name,
@@ -244,19 +245,38 @@ class SearchSpecialistAgent:
                 top_k=settings.similarity_top_k
             )
 
-            if search_results:
-                # Format hasil pencarian dari memory
-                formatted_results = []
-                for result in search_results:
-                    # Gunakan field yang benar berdasarkan skema search_memory
-                    summary_text = result.get('summary_text', result.get('text', ''))
-                    formatted_result = f"Previous Search Summary: {summary_text}\n"
-                    formatted_result += f"Source URLs: {result.get('metadata', {}).get('source_urls', [])}\n"
-                    formatted_result += f"Timestamp: {result.get('metadata', {}).get('timestamp', 'N/A')}\n\n"
-                    formatted_results.append(formatted_result)
+            logger.info(f"\033[94m[SEARCH RESULTS]\033[0m Found {len(search_results)} results in search_memory for query: {query}")
 
-                return "\n".join(formatted_results)
+            if search_results:
+                # Cek apakah hasil memiliki tingkat kemiripan yang cukup tinggi
+                # Ambil hasil dengan skor kemiripan tertinggi
+                best_result = search_results[0]  # Hasil dengan skor tertinggi
+                similarity_score = best_result.get('distance', float('inf'))  # Gunakan jarak sebagai ukuran kemiripan
+
+                # Konversi jarak ke skor kemiripan (semakin kecil jarak, semakin tinggi kemiripan)
+                # Gunakan threshold 0.6 (jarak kurang dari 0.6 dianggap cukup mirip)
+                similarity_threshold = 0.6
+
+                logger.info(f"\033[94m[SIMILARITY SCORE]\033[0m Best similarity score: {similarity_score}")
+
+                if similarity_score < similarity_threshold:
+                    # Ambil hanya hasil dengan skor kemiripan terbaik (paling tinggi)
+                    best_result = search_results[0]
+                    # Gunakan field yang benar berdasarkan skema search_memory
+                    summary_text = best_result.get('summary_text', best_result.get('text', ''))
+
+                    # Format hasil pencarian dari memory
+                    formatted_result = f"Previous Search Summary: {summary_text}\n"
+                    formatted_result += f"Source URLs: {best_result.get('metadata', {}).get('source_urls', [])}\n"
+                    formatted_result += f"Timestamp: {best_result.get('metadata', {}).get('timestamp', 'N/A')}\n\n"
+
+                    logger.info(f"\033[92m[SUFFICIENT SIMILARITY]\033[0m Using cached results with similarity score: {similarity_score}")
+                    return formatted_result
+                else:
+                    logger.info(f"\033[93m[LOW SIMILARITY]\033[0m Best similarity score {similarity_score} is above threshold {similarity_threshold}, need to search internet")
+                    return "No previous search results found in memory for this query."
             else:
+                logger.info(f"\033[91m[NO RESULTS FOUND]\033[0m No previous search results found in memory for query: {query}")
                 return "No previous search results found in memory for this query."
         except Exception as e:
             logger.error(f"Error checking search memory: {str(e)}")
@@ -319,25 +339,31 @@ class SearchSpecialistAgent:
         """Run query through the search specialist agent"""
         try:
             # Cek dulu apakah sudah ada hasil serupa di memory
+            logger.info(f"\033[94m[CHECKING MEMORY]\033[0m Checking search memory for query: {query}")
             memory_check = self.check_search_memory(query)
 
             if "No previous search results found" in memory_check:
+                logger.info("\033[93m[NO CACHED RESULT]\033[0m No similar query found in search memory, performing new internet search")
                 # Lakukan pencarian baru
                 response = await self.search_internet(query)
 
                 # Simpan hasil pencarian ke memory jika session_id disediakan
                 if session_id:
+                    logger.info("\033[95m[SAVING RESULTS]\033[0m Saving new search results to MySQL and Milvus")
                     # Ekstrak informasi dari hasil pencarian untuk disimpan
                     results_summary = self._extract_summary_from_response(response)
                     source_urls = self._extract_urls_from_response(response)
 
                     # Simpan ke MySQL search_history
                     search_id = memory_manager.save_search_history(query, results_summary, source_urls, session_id)
+                    logger.info(f"\033[95m[SAVED TO MYSQL]\033[0m Saved search history to MySQL with ID: {search_id}")
 
                     # Simpan ke Milvus search_memory
                     if search_id:
                         memory_manager.save_search_memory(results_summary, search_id, session_id, source_urls)
+                        logger.info(f"\033[95m[SAVED TO MILVUS]\033[0m Saved search memory to Milvus with search_id: {search_id}")
             else:
+                logger.info("\033[92m[USING CACHED RESULT]\033[0m Found similar query in search memory, using cached results")
                 # Gunakan hasil dari memory
                 response = memory_check
 

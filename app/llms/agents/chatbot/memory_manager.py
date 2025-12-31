@@ -35,6 +35,7 @@ class MemoryManager:
     def save_search_memory(self, summary: str, search_id: str, session_id: str, source_urls: List[str]) -> bool:
         """Simpan ringkasan hasil search baru ke Milvus search_memory"""
         try:
+            logger.info(f"\033[95m[SAVING TO MILVUS]\033[0m Attempting to save search memory to Milvus - Search ID: {search_id}")
             # Validasi bahwa summary tidak kosong
             if not summary or len(summary.strip()) < 5:
                 summary = "Ringkasan hasil pencarian dari internet"
@@ -65,7 +66,7 @@ class MemoryManager:
             # Commit perubahan
             search_memory_collection.flush()
 
-            logger.info(f"Successfully stored search result in memory with ID: {search_id}")
+            logger.info(f"\033[95m[SUCCESS MILVUS]\033[0m Successfully stored search result in Milvus with ID: {search_id}")
             return True
         except Exception as e:
             logger.error(f"Error storing search memory: {str(e)}")
@@ -114,12 +115,13 @@ class MemoryManager:
     def save_search_history(self, query: str, results_summary: str, source_urls: List[str], session_id: str) -> str:
         """Simpan histori pencarian ke MySQL"""
         try:
+            logger.info(f"\033[95m[SAVING TO MYSQL]\033[0m Attempting to save search history to MySQL - Query: {query[:50]}...")
             from uuid import uuid4
             search_id = str(uuid4())
-            
+
             # Dapatkan session database
             db = next(get_db())
-            
+
             # Buat record histori pencarian
             search_history = SearchHistory(
                 id=search_id,
@@ -128,12 +130,12 @@ class MemoryManager:
                 source_urls=json.dumps(source_urls),
                 session_id=session_id
             )
-            
+
             db.add(search_history)
             db.commit()
             db.close()
-            
-            logger.info(f"Successfully saved search history with ID: {search_id}")
+
+            logger.info(f"\033[95m[SUCCESS MYSQL]\033[0m Successfully saved search history to MySQL with ID: {search_id}")
             return search_id
         except Exception as e:
             logger.error(f"Error saving search history: {str(e)}")
@@ -178,15 +180,16 @@ class MemoryManager:
     def get_relevant_search_memory(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """Dapatkan hasil pencarian yang relevan dari search_memory di Milvus"""
         try:
+            logger.info(f"\033[94m[RETRIEVING FROM MILVUS]\033[0m Retrieving relevant search memory from Milvus for query: {query}")
             # Buat embedding dari query
             query_embedding = self.embed_model.get_text_embedding(query)
-            
+
             # Cari di search_memory collection
             search_params = {
                 "metric_type": "COSINE",
                 "params": {"nprobe": 10}
             }
-            
+
             results = search_memory_collection.search(
                 data=[query_embedding],
                 anns_field="vector",
@@ -194,15 +197,15 @@ class MemoryManager:
                 limit=top_k,
                 output_fields=["summary_text", "metadata"]
             )
-            
+
             relevant_results = []
             for result in results[0]:  # Ambil hasil dari batch pertama
                 relevant_results.append({
                     "summary_text": result.entity.get('summary_text'),
                     "metadata": result.entity.get('metadata')
                 })
-            
-            logger.info(f"Retrieved {len(relevant_results)} relevant search memories")
+
+            logger.info(f"\033[94m[MILVUS RESULTS]\033[0m Retrieved {len(relevant_results)} relevant search memories from Milvus")
             return relevant_results
         except Exception as e:
             logger.error(f"Error retrieving search memory: {str(e)}")
