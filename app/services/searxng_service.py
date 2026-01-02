@@ -124,19 +124,24 @@ class SearXNGService:
         """
         Lakukan pencarian informasi menggunakan SearXNG tanpa filter spesifik
         """
+        import logging
+        logger = logging.getLogger(__name__)
+
         try:
+            logger.info(f"[SEARXNG_SERVICE] Melakukan pencarian untuk query: '{query}'")
+
             # Lakukan pencarian langsung dengan query asli
             results = self.search(query, max_results=10)
 
             if results:
-                print(f"Ditemukan {len(results)} hasil untuk query '{query}'")
+                logger.info(f"[SEARXNG_SERVICE] Ditemukan {len(results)} hasil untuk query '{query}'")
                 return results
             else:
-                print(f"Tidak ada hasil ditemukan untuk query '{query}'")
+                logger.info(f"[SEARXNG_SERVICE] Tidak ada hasil ditemukan untuk query '{query}'")
                 return []
 
         except Exception as e:
-            print(f"Error saat melakukan pencarian informasi: {e}")
+            logger.error(f"[SEARXNG_SERVICE] Error saat melakukan pencarian informasi: {e}")
             return []
 
 

@@ -29,7 +29,7 @@ class MemoryManager:
         # Inisialisasi embedding
         self.embed_model = OllamaEmbedding(
             model_name=settings.embedding_model_name,
-            base_url=settings.llm_base_url
+            base_url=settings.llm_embedding
         )
     
     def save_search_memory(self, summary: str, search_id: str, session_id: str, source_urls: List[str]) -> bool:

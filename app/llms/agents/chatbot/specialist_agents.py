@@ -4,8 +4,6 @@ Definisi Agen Spesialis untuk Multi Agent RAG
 import asyncio
 from typing import Dict, List, Any, Optional
 from langchain_core.tools import BaseTool
-from langchain_openai import ChatOpenAI
-from langchain_ollama import ChatOllama
 from llama_index.core import VectorStoreIndex
 from llama_index.vector_stores.milvus import MilvusVectorStore
 from llama_index.embeddings.ollama import OllamaEmbedding
@@ -15,6 +13,7 @@ from app.services.milvus_service import milvus_service
 from app.database.milvus_config import search_memory_collection
 from app.llms.agents.tools.mcp_tool import call_sequential_thinking_tool
 from app.llms.agents.chatbot.memory_manager import memory_manager
+from langchain_openai import ChatOpenAI
 import logging
 
 logger = logging.getLogger(__name__)
@@ -28,12 +27,11 @@ class LocalSpecialistTool(BaseTool):
         """Search for relevant documents in Milvus"""
         try:
             # Ambil konteks dari Milvus
-            from app.llms.agents.chatbot.rag_agent import enhanced_rag_chain
             from llama_index.core import Settings
 
             embed_model = OllamaEmbedding(
                 model_name=settings.embedding_model_name,
-                base_url=settings.llm_base_url
+                base_url=settings.llm_embedding
             )
 
             query_embedding = embed_model.get_text_embedding(query)
@@ -69,16 +67,17 @@ class LocalSpecialistAgent:
 
     def __init__(self):
         # Inisialisasi LLM
-        self.llm = ChatOllama(
+        self.llm = ChatOpenAI(
             model=settings.llm_model_name,
             base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
             temperature=0.1
         )
 
         # Inisialisasi embedding
         self.embed_model = OllamaEmbedding(
             model_name=settings.embedding_model_name,
-            base_url=settings.llm_base_url
+            base_url=settings.llm_embedding
         )
 
         # Gunakan milvus_service yang sudah kita buat sebelumnya
@@ -216,9 +215,10 @@ class SearchSpecialistAgent:
 
     def __init__(self):
         # Inisialisasi LLM
-        self.llm = ChatOllama(
+        self.llm = ChatOpenAI(
             model=settings.llm_model_name,
             base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
             temperature=0.1
         )
 
@@ -235,7 +235,7 @@ class SearchSpecialistAgent:
             # Ambil embedding dari query
             query_embedding = OllamaEmbedding(
                 model_name=settings.embedding_model_name,
-                base_url=settings.llm_base_url
+                base_url=settings.llm_embedding
             ).get_text_embedding(query)
 
             # Cari di search_memory collection
@@ -248,20 +248,23 @@ class SearchSpecialistAgent:
             logger.info(f"\033[94m[SEARCH RESULTS]\033[0m Found {len(search_results)} results in search_memory for query: {query}")
 
             if search_results:
-                # Cek apakah hasil memiliki tingkat kemiripan yang cukup tinggi
-                # Ambil hasil dengan skor kemiripan tertinggi
-                best_result = search_results[0]  # Hasil dengan skor tertinggi
-                similarity_score = best_result.get('distance', float('inf'))  # Gunakan jarak sebagai ukuran kemiripan
+                # Ambil hasil dengan skor kemiripan tertinggi (jarak terendah)
+                best_result = search_results[0]  # Hasil dengan jarak terendah (kemiripan tertinggi)
+                best_similarity_score = best_result.get('distance', float('inf'))  # Gunakan jarak sebagai ukuran kemiripan
 
-                # Konversi jarak ke skor kemiripan (semakin kecil jarak, semakin tinggi kemiripan)
-                # Gunakan threshold 0.6 (jarak kurang dari 0.6 dianggap cukup mirip)
-                similarity_threshold = 0.6
+                # Gunakan threshold tetap berdasarkan skor kemiripan terbaik
+                # Kita gunakan threshold tetap untuk konsistensi antar permintaan
+                # Berdasarkan pengujian sebelumnya, nilai 0.65 masih terlalu tinggi
+                # Kita turunkan threshold untuk mencegah sistem menganggap pertanyaan yang berbeda sebagai mirip
+                similarity_threshold = 0.5  # Threshold tetap untuk menentukan kemiripan
 
-                logger.info(f"\033[94m[SIMILARITY SCORE]\033[0m Best similarity score: {similarity_score}")
+                logger.info(f"\033[94m[BEST SCORE]\033[0m Best similarity score: {best_similarity_score}")
+                logger.info(f"\033[94m[THRESHOLD]\033[0m Fixed similarity threshold: {similarity_threshold}")
 
-                if similarity_score < similarity_threshold:
-                    # Ambil hanya hasil dengan skor kemiripan terbaik (paling tinggi)
-                    best_result = search_results[0]
+                # Jika skor terbaik lebih kecil dari threshold, maka cukup mirip
+                # Dalam konteks cosine similarity, jarak yang lebih rendah berarti kemiripan yang lebih tinggi
+                if best_similarity_score < similarity_threshold:
+                    # Ambil hanya hasil dengan skor kemiripan terbaik (jarak terendah)
                     # Gunakan field yang benar berdasarkan skema search_memory
                     summary_text = best_result.get('summary_text', best_result.get('text', ''))
 
@@ -270,10 +273,10 @@ class SearchSpecialistAgent:
                     formatted_result += f"Source URLs: {best_result.get('metadata', {}).get('source_urls', [])}\n"
                     formatted_result += f"Timestamp: {best_result.get('metadata', {}).get('timestamp', 'N/A')}\n\n"
 
-                    logger.info(f"\033[92m[SUFFICIENT SIMILARITY]\033[0m Using cached results with similarity score: {similarity_score}")
+                    logger.info(f"\033[92m[SUFFICIENT SIMILARITY]\033[0m Using cached results with similarity score: {best_similarity_score} (threshold: {similarity_threshold})")
                     return formatted_result
                 else:
-                    logger.info(f"\033[93m[LOW SIMILARITY]\033[0m Best similarity score {similarity_score} is above threshold {similarity_threshold}, need to search internet")
+                    logger.info(f"\033[93m[LOW SIMILARITY]\033[0m Best similarity score {best_similarity_score} is above threshold {similarity_threshold}, need to search internet")
                     return "No previous search results found in memory for this query."
             else:
                 logger.info(f"\033[91m[NO RESULTS FOUND]\033[0m No previous search results found in memory for query: {query}")
@@ -299,10 +302,37 @@ class SearchSpecialistAgent:
                 }
             )
 
+            logger.info(f"[SEARCH AGENT] Query asli: {query}")
+            logger.info(f"[SEARCH AGENT] Hasil reasoning: {reasoning_result}")
+
+            # Ekstrak kata kunci dari hasil reasoning
+            if reasoning_result and "result" in reasoning_result:
+                reasoning_content = reasoning_result["result"]
+                logger.info(f"[SEARCH AGENT] Isi reasoning: {reasoning_content}")
+
+                # Coba ekstrak kata kunci dari reasoning
+                import re
+                # Cari pola kata kunci dalam reasoning
+                keywords_match = re.search(r'kata kunci.*?:(.*?)(?:\n|$)', reasoning_content, re.IGNORECASE | re.DOTALL)
+                if keywords_match:
+                    keywords = keywords_match.group(1).strip()
+                    logger.info(f"[SEARCH AGENT] Kata kunci diekstrak dari reasoning: {keywords}")
+                else:
+                    # Jika tidak ditemukan, gunakan query asli
+                    keywords = query
+                    logger.info(f"[SEARCH AGENT] Tidak menemukan kata kunci spesifik, menggunakan query asli: {keywords}")
+            else:
+                keywords = query
+                logger.info(f"[SEARCH AGENT] Sequential thinking tidak memberikan hasil, menggunakan query asli: {keywords}")
+
+            logger.info(f"[SEARCH AGENT] Kata kunci yang akan digunakan untuk pencarian: {keywords}")
+
             # Gunakan searxng_service untuk pencarian
-            search_results = searxng_service.search_compliance_info(query)
+            search_results = searxng_service.search_compliance_info(keywords)
 
             if search_results:
+                logger.info(f"[SEARCH AGENT] Ditemukan {len(search_results)} hasil untuk kata kunci: {keywords}")
+
                 # Format hasil pencarian
                 formatted_results = []
                 for result in search_results:
@@ -330,6 +360,7 @@ class SearchSpecialistAgent:
                 else:
                     return "\n".join(formatted_results)
             else:
+                logger.info(f"[SEARCH AGENT] Tidak ditemukan hasil untuk kata kunci: {keywords}")
                 return "No results found from internet search."
         except Exception as e:
             logger.error(f"Error searching internet: {str(e)}")

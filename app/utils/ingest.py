@@ -46,8 +46,9 @@ def save_documents_to_milvus_with_cleaning():
     config = {
         "DATA_DIR": Path("data/knowledge_base"),
         "LLM_BASE_URL": os.getenv("LLM_BASE_URL"),
+        "LLM_EMBEDDING": os.getenv("LLM_EMBEDDING"),
         "LLM_MODEL_NAME": os.getenv("LLM_MODEL_NAME"),
-        "API_KEY": os.getenv("LLM_API_KEY", "ollama"),
+        "API_KEY": os.getenv("LLM_API_KEY", "oriensagentapi"),
         "EMBEDDING_MODEL_NAME": os.getenv("EMBEDDING_MODEL_NAME"),
         "MILVUS_COLLECTION_NAME": os.getenv("MILVUS_COLLECTION_NAME"),
         "CHUNK_SIZE": 1024,
@@ -57,7 +58,7 @@ def save_documents_to_milvus_with_cleaning():
     # Inisialisasi model
     embed_model = OllamaEmbedding(
         model_name=config["EMBEDDING_MODEL_NAME"],
-        base_url=config["LLM_BASE_URL"],
+        base_url=config["LLM_EMBEDDING"],
     )
 
     Settings.embed_model = embed_model

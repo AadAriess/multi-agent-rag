@@ -7,13 +7,12 @@ from typing import Dict, List, Any, Optional
 from langchain_core.agents import AgentFinish
 from langchain_core.callbacks import CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
-from langchain_ollama import ChatOllama
 from langgraph.graph import StateGraph, END
 from pydantic import BaseModel
 from app.core.config import settings
 from app.llms.agents.chatbot.specialist_agents import create_local_specialist_agent, create_search_specialist_agent
-from app.llms.core.rag_engine import enhanced_rag_chain  # Import fungsi RAG dari core
 from app.llms.agents.tools.mcp_tool import call_sequential_thinking_tool
+from langchain_openai import ChatOpenAI
 import logging
 
 logger = logging.getLogger(__name__)
@@ -42,9 +41,10 @@ class AggregatorAgent:
 
     def __init__(self):
         # Inisialisasi LLM
-        self.llm = ChatOllama(
+        self.llm = ChatOpenAI(
             model=settings.llm_model_name,
             base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
             temperature=0.1
         )
 
@@ -260,9 +260,11 @@ class AggregatorAgent:
         """Analisis jenis query: internal, external, atau keduanya"""
         # Gunakan server sequential-thinking melalui MCP untuk menganalisis jenis query secara dinamis
         try:
+            logger.info(f"[ANALYZE_QUERY_TYPE] Mengirim query ke sequential thinking: {query}")
+
             # Gunakan MCP untuk memanggil fungsi sequential thinking
             result = await call_sequential_thinking_tool(
-                "think",
+                "sequentialthinking",
                 {
                     "input": f"""
                     Analisis pertanyaan berikut dan tentukan apakah membutuhkan:
@@ -277,8 +279,12 @@ class AggregatorAgent:
                 }
             )
 
+            logger.info(f"[ANALYZE_QUERY_TYPE] Hasil dari sequential thinking: {result}")
+
             if result and "result" in result:
                 analysis_result = result["result"].strip().lower()
+
+                logger.info(f"[ANALYZE_QUERY_TYPE] Hasil analisis: {analysis_result}")
 
                 # Validasi hasil analisis
                 if analysis_result in ["internal", "external", "both"]:
@@ -289,6 +295,7 @@ class AggregatorAgent:
                     return "both"
             else:
                 logger.warning("Sequential thinking server tidak memberikan hasil, menggunakan default 'both'")
+                logger.warning(f"Nilai result: {result}")
                 return "both"
         except Exception as e:
             logger.error(f"Error saat menganalisis jenis query dengan sequential thinking: {e}, menggunakan default 'both'")
@@ -384,10 +391,21 @@ class AggregatorAgent:
 
     async def _aggregate_responses(self, state: AgentState) -> Dict[str, Any]:
         """Aggregasi dan resolusi konflik antara respon agen"""
-        logger.info("Aggregating responses from agents")
+        logger.info(f"[AGGREGATOR] Aggregating responses for query: '{state.query}'")
 
         local_response = state.local_response
         search_response = state.search_response
+
+        # Log informasi dari kedua agen
+        if local_response:
+            logger.info(f"[AGGREGATOR] Local agent response: {local_response['response'][:200]}...")
+        else:
+            logger.info("[AGGREGATOR] No response from local agent")
+
+        if search_response:
+            logger.info(f"[AGGREGATOR] Search agent response: {search_response['response'][:200]}...")
+        else:
+            logger.info("[AGGREGATOR] No response from search agent")
 
         # Ambil konteks dari session sebelumnya jika ada
         context = {}
@@ -501,6 +519,8 @@ class AggregatorAgent:
         """
 
         final_response = self.llm.invoke(final_prompt).content
+
+        logger.info(f"[AGGREGATOR] Final response generated: {final_response[:200]}...")
 
         return {
             "final_response": final_response,

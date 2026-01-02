@@ -50,6 +50,9 @@ dependencies = [
     "langgraph",
     "cryptography",
     "langchain-ollama",
+    "requests",
+    "mcp",
+    "starlette"
 ]
 
 [project.optional-dependencies]

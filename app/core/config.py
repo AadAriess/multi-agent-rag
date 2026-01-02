@@ -11,6 +11,7 @@ class MultiAgentRAGSettings(BaseSettings):
     llm_base_url: str  # Dibaca dari LLM_BASE_URL di .env
     llm_model_name: str  # Dibaca dari LLM_MODEL_NAME di .env
     llm_api_key: str  # Dibaca dari LLM_API_KEY di .env
+    llm_embedding: str # Dibaca dari LLM_EMBEDDING di .env
 
     # Konfigurasi Embedding
     embedding_model_name: str  # Dibaca dari EMBEDDING_MODEL_NAME di .env
@@ -85,6 +86,7 @@ class Config:
             'LLM_BASE_URL': 'llm_base_url',
             'LLM_MODEL_NAME': 'llm_model_name',
             'LLM_API_KEY': 'llm_api_key',
+            'LLM_EMBEDDING': 'llm_embedding',
             'EMBEDDING_MODEL_NAME': 'embedding_model_name',
             'MILVUS_HOST': 'milvus_host',
             'MILVUS_PORT': 'milvus_port',

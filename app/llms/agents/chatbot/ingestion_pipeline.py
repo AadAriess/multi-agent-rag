@@ -95,7 +95,7 @@ def embed_chunks(chunks: List[DocumentChunk]) -> List:
     # Initialize Ollama embedding model
     embed_model = OllamaEmbedding(
         model_name=settings.embedding_model_name,
-        base_url=settings.llm_base_url
+        base_url=settings.llm_embedding
     )
     
     embedded_chunks = []
