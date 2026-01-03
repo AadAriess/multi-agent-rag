@@ -1,9 +1,11 @@
 """
 Router FastAPI untuk chatbot Multi Agent RAG
 """
+import json
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncGenerator
 from uuid import uuid4
 import asyncio
 import time
@@ -59,85 +61,112 @@ class IngestionResponse(BaseModel):
     processed_files: int
 
 
-@router.post("/chat/completions", response_model=ChatCompletionResponse)
-async def chat_completions(request: ChatCompletionRequest, db: Session = Depends(get_db)):
+async def generate_streaming_response(request: ChatCompletionRequest, db: Session) -> AsyncGenerator[str, None]:
     """
-    Endpoint untuk mengirimkan query ke chatbot Multi Agent RAG dengan format OpenAI API
+    Fungsi generator untuk menghasilkan respons streaming dari chatbot Multi Agent RAG
     """
     try:
         # Ambil query dari pesan terakhir
         query = request.messages[-1].content if request.messages else ""
 
         # Buat session_id dan user_id jika tidak ada
-        """
-        session_id : bisa diisi dengan channel id atau jika individu diisi dengan user_id ?
-        """
         session_id = request.session_id or str(uuid4())
         user_id = request.user_id or str(uuid4())
-
-        # Cek apakah ada state sebelumnya di Redis
-        previous_state = memory_manager.load_graph_state(session_id)
 
         # Buat aggregator agent
         aggregator_agent = create_aggregator_agent()
 
-        # Jalankan query melalui aggregator agent
-        result = await aggregator_agent.ainvoke(query, session_id)
-
-        # Gunakan aggregator agent untuk update konteks percakapan ke MySQL
-        # dengan struktur data yang sesuai (array untuk <=10 percakapan, objek summary+history untuk >10)
-        aggregator_agent = create_aggregator_agent()
-        agent_responses = [
-            {"agent_id": "local_specialist", "response": result.get("local_response", "N/A")},
-            {"agent_id": "search_specialist", "response": result.get("search_response", "N/A")}
-        ]
-
-        aggregator_agent._update_context_for_session(
-            session_id=session_id,
-            query=query,
-            response=result["final_response"],
-            agent_responses=agent_responses
-        )
-
-        # Simpan state graph ke Redis untuk sesi berikutnya
-        state_to_save = {
-            "last_query": query,
-            "last_response": result["final_response"],
-            "session_id": session_id,
-            "user_id": user_id
-        }
-        memory_manager.save_graph_state(session_id, state_to_save)
-
-        # Buat response dalam format OpenAI API
+        # Buat response dalam format OpenAI API streaming
         response_id = f"chatcmpl-{uuid4().hex}"
         current_timestamp = int(time.time())
 
-        # Karena kita menggunakan aggregator agent, kita tidak mendapatkan usage langsung dari model
-        # Jadi kita gunakan estimasi sederhana atau nilai default
-        response = ChatCompletionResponse(
-            id=response_id,
-            created=current_timestamp,
-            model=request.model,
-            choices=[
-                Choice(
-                    index=0,
-                    message=Message(
-                        role="assistant",
-                        content=result["final_response"]
-                    ),
-                    finish_reason="stop"
-                )
-            ],
-            usage=Usage(
-                completion_tokens=0,  # Akan diisi oleh model sebenarnya dalam implementasi lengkap
-                prompt_tokens=0,      # Akan diisi oleh model sebenarnya dalam implementasi lengkap
-                total_tokens=0        # Akan diisi oleh model sebenarnya dalam implementasi lengkap
-            )
-        )
+        # Kirim chunk awal
+        initial_chunk = {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "created": current_timestamp,
+            "model": request.model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "content": ""
+                    },
+                    "finish_reason": None
+                }
+            ]
+        }
 
-        return response
+        yield f"data: {json.dumps(initial_chunk)}\n\n"
+
+        # Gunakan fungsi astream untuk mendapatkan respons token per token
+        token_count = 0
+        async for token in aggregator_agent.astream(query, session_id):
+            token_count += 1
+
+            # Format chunk dalam format OpenAI API streaming
+            chunk = {
+                "id": response_id,
+                "object": "chat.completion.chunk",
+                "created": current_timestamp,
+                "model": request.model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "content": token
+                        },
+                        "finish_reason": None
+                    }
+                ]
+            }
+
+            yield f"data: {json.dumps(chunk)}\n\n"
+
+        # Kirim chunk terakhir dengan finish_reason
+        final_chunk = {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "created": current_timestamp,
+            "model": request.model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop"
+                }
+            ],
+            "usage": {
+                "completion_tokens": token_count,
+                "prompt_tokens": 0,
+                "total_tokens": token_count
+            }
+        }
+
+        yield f"data: {json.dumps(final_chunk)}\n\n"
+        yield "data: [DONE]\n\n"
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+        error_chunk = {
+            "error": {
+                "type": "server_error",
+                "message": f"Error processing query: {str(e)}"
+            }
+        }
+        yield f"data: {json.dumps(error_chunk)}\n\n"
+        yield "data: [DONE]\n\n"
+
+
+@router.post("/chat/completions", response_class=StreamingResponse)
+async def chat_completions(request: ChatCompletionRequest, db: Session = Depends(get_db)):
+    """
+    Endpoint untuk mengirimkan query ke chatbot Multi Agent RAG dengan format OpenAI API streaming
+    """
+    return StreamingResponse(
+        generate_streaming_response(request, db),
+        media_type="text/event-stream"
+    )
 
 
 @router.post("/ingest", response_model=IngestionResponse)

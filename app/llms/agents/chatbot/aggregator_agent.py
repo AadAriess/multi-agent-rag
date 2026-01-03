@@ -45,6 +45,7 @@ class AggregatorAgent:
             model=settings.llm_model_name,
             base_url=settings.llm_base_url,
             api_key=settings.llm_api_key,
+            streaming=True,
             temperature=0.1
         )
 
@@ -611,6 +612,67 @@ class AggregatorAgent:
                 "local_response": result.local_response,
                 "search_response": result.search_response
             }
+
+    async def astream(self, query: str, session_id: str = None):
+        """Fungsi streaming untuk menghasilkan respons token per token"""
+        logger.info(f"Starting streaming aggregation for query: {query}")
+
+        # Ambil konteks dari session sebelumnya jika ada
+        context = self._get_context_from_session(session_id) if session_id else {}
+
+        # Tambahkan konteks ke state jika ada
+        initial_state = AgentState(
+            query=query,
+            session_id=session_id
+        )
+
+        # Jalankan graph
+        result = await self.graph.ainvoke(initial_state)
+
+        # Ambil respons akhir
+        final_response = ""
+        if isinstance(result, dict):
+            final_response = result.get("final_response", "")
+            # Update konteks session dengan hasil baru
+            if session_id:
+                self._update_context_for_session(
+                    session_id=session_id,
+                    query=query,
+                    response=final_response,
+                    agent_responses=[]
+                )
+        else:
+            final_response = result.final_response
+            # Update konteks session dengan hasil baru
+            if session_id:
+                self._update_context_for_session(
+                    session_id=session_id,
+                    query=query,
+                    response=final_response,
+                    agent_responses=[]
+                )
+
+        # Kirim respons token per token
+        tokens = final_response.split(" ")
+        for i, token in enumerate(tokens):
+            # Tambahkan spasi kembali kecuali untuk token terakhir
+            if i < len(tokens) - 1:
+                token += " "
+            yield token
+
+    def stream(self, query: str, session_id: str = None):
+        """Fungsi sync untuk streaming"""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Jika tidak ada event loop, buat baru
+            return asyncio.run(self.astream(query, session_id))
+        else:
+            # Jika sudah ada event loop, gunakan thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, self.astream(query, session_id))
+                return future.result()
 
     def invoke(self, query: str, session_id: str = None) -> Dict[str, Any]:
         """Jalankan aggregator agent secara sync"""
