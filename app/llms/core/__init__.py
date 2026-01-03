@@ -2,62 +2,76 @@
 File inisialisasi untuk sistem Multi Agent RAG
 """
 import threading
-import uvicorn
-from app.llms.core.mcp.mcp_server import app as mcp_app
-from app.database.milvus_config import connect_to_milvus, create_milvus_collections
-from app.llms.agents.chatbot.knowledge_base_initializer import initialize_knowledge_base
 import logging
+import asyncio
+from typing import Dict, Any
+import multiprocessing
 
 logger = logging.getLogger(__name__)
 
+# Variabel global untuk menyimpan status sistem
+_rag_system_cache = None
 
-def initialize_multi_agent_rag():
+def initialize_multi_agent_rag() -> Dict[str, Any]:
     """
-    Fungsi untuk menginisialisasi seluruh sistem Multi Agent RAG
+    Fungsi untuk menginisialisasi seluruh sistem Multi Agent RAG.
+    Menggunakan caching agar tidak terjadi inisialisasi ganda.
     """
-    print("Memulai inisialisasi sistem Multi Agent RAG...")
+    global _rag_system_cache
+    if _rag_system_cache:
+        return _rag_system_cache
 
-    # Inisialisasi koneksi Milvus
-    print("Menginisialisasi koneksi Milvus...")
-    connect_to_milvus()
-    compliance_docs_collection, search_memory_collection = create_milvus_collections()
-    print("Koneksi Milvus berhasil diinisialisasi")
+    print("🚀 Memulai inisialisasi sistem Multi Agent RAG...")
 
-    # Inisialisasi knowledge base
-    print("Menginisialisasi knowledge base...")
-    initialize_knowledge_base()
-    print("Knowledge base berhasil diinisialisasi")
+    try:
+        from app.database.milvus_config import connect_to_milvus, create_milvus_collections
+        from app.llms.agents.chatbot.knowledge_base_initializer import initialize_knowledge_base
 
-    print("Sistem Multi Agent RAG siap digunakan")
+        # 1. Inisialisasi koneksi Milvus
+        print("📦 Menginisialisasi koneksi Milvus...")
+        connect_to_milvus()
+        compliance_docs, search_memory = create_milvus_collections()
+        print("✅ Koneksi Milvus berhasil")
 
-    return {
-        "compliance_docs_collection": compliance_docs_collection,
-        "search_memory_collection": search_memory_collection
-    }
+        # 2. Inisialisasi knowledge base (Ingestion)
+        print("📚 Menginisialisasi knowledge base...")
+        initialize_knowledge_base()
+        print("✅ Knowledge base siap")
+
+        _rag_system_cache = {
+            "compliance_docs_collection": compliance_docs,
+            "search_memory_collection": search_memory
+        }
+        
+        print("✨ Sistem Multi Agent RAG siap digunakan")
+        return _rag_system_cache
+
+    except Exception as e:
+        logger.error(f"❌ Gagal menginisialisasi RAG System: {e}")
+        # Kembalikan struktur kosong agar aplikasi tidak crash total
+        return {"compliance_docs_collection": None, "search_memory_collection": None}
 
 
 def run_mcp_server_in_background():
     """
-    Fungsi untuk menjalankan MCP server di background thread
+    Menjalankan runner FastMCP di Process terpisah.
+    Ini identik dengan menjalankan 'python mcp_server.py' di terminal lain.
     """
-    def start_server():
+    def start_server_process():
         try:
-            uvicorn.run(
-                mcp_app,
-                host="0.0.0.0",
-                port=8071,
-                log_level="info"
-            )
+            # Import di dalam fungsi untuk menghindari circular import
+            from app.llms.core.mcp.mcp_server import run_mcp_sse_server
+            run_mcp_sse_server()
         except Exception as e:
-            logger.error(f"Error saat menjalankan MCP server: {e}")
+            logger.error(f"❌ Error di dalam MCP Process: {e}")
 
-    # Jalankan MCP server di thread terpisah
-    mcp_thread = threading.Thread(target=start_server, daemon=True)
-    mcp_thread.start()
-    print("MCP server dimulai di background thread")
+    # Menggunakan Process (bukan Thread) agar Event Loop tidak tabrakan
+    p = multiprocessing.Process(target=start_server_process, daemon=True)
+    p.start()
+    
+    print(f"📡 MCP Server Process started (PID: {p.pid}) on Port 8071")
 
 
-# Inisialisasi sistem
-multi_agent_rag_system = initialize_multi_agent_rag()
-
-print("Semua komponen Multi Agent RAG telah diinisialisasi")
+# JANGAN jalankan inisialisasi otomatis di level modul jika ingin control penuh di main.py
+# Namun, jika Anda ingin tetap otomatis, biarkan seperti di bawah ini:
+# multi_agent_rag_system = initialize_multi_agent_rag()

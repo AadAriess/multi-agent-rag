@@ -27,6 +27,7 @@ class LocalSpecialistTool(BaseTool):
         """Search for relevant documents in Milvus"""
         try:
             # Ambil konteks dari Milvus
+            from app.services.milvus_service import milvus_service
             from llama_index.core import Settings
 
             embed_model = OllamaEmbedding(
@@ -94,51 +95,22 @@ class LocalSpecialistAgent:
     async def search_local_documents(self, query: str) -> str:
         """Search for relevant documents in Milvus"""
         try:
-            # Gunakan pendekatan ReAct (Reason + Act) dengan bantuan sequential thinking
-            # Pertama, lakukan reasoning untuk memahami query
-            reasoning_result = await call_sequential_thinking_tool(
-                "think",
-                {
-                    "input": f"""
-                    Analisis query berikut: "{query}"
-
-                    Apa yang harus saya cari di database dokumen lokal?
-                    Apa istilah kunci yang penting?
-                    """
-                }
-            )
+            
+            logger.info(f"Proses pencarian lokal untuk: {query}")
 
             # Lakukan pencarian di Milvus
             query_embedding = self.embed_model.get_text_embedding(query)
             search_results = self.milvus_service.search_similar(query_embedding, top_k=settings.similarity_top_k)
 
             if search_results:
-                # Format hasil pencarian
                 formatted_results = []
                 for result in search_results:
                     formatted_result = f"Document: {result.get('metadata', {}).get('doc_name', 'Unknown')}\n"
                     formatted_result += f"Content: {result.get('text', '')}\n"
                     formatted_result += f"Relevance Score: {result.get('distance', 'N/A')}\n\n"
                     formatted_results.append(formatted_result)
-
-                # Gunakan pendekatan ReAct untuk mengevaluasi hasil
-                evaluation_result = await call_sequential_thinking_tool(
-                    "think",
-                    {
-                        "input": f"""
-                        Berikut adalah hasil pencarian untuk query: "{query}"
-
-                        {formatted_results}
-
-                        Evaluasi apakah hasil ini relevan dan cukup untuk menjawab pertanyaan.
-                        """
-                    }
-                )
-
-                if evaluation_result and "result" in evaluation_result:
-                    return f"Evaluation: {evaluation_result['result']}\n\n" + "\n".join(formatted_results)
-                else:
-                    return "\n".join(formatted_results)
+                
+                return "\n".join(formatted_results)
             else:
                 return "No relevant documents found in local compliance database."
         except Exception as e:
@@ -291,14 +263,12 @@ class SearchSpecialistAgent:
             # Gunakan pendekatan ReAct (Reason + Act) dengan bantuan sequential thinking
             # Pertama, lakukan reasoning untuk memahami query
             reasoning_result = await call_sequential_thinking_tool(
-                "think",
-                {
-                    "input": f"""
-                    Analisis query berikut: "{query}"
-
-                    Apa yang harus saya cari di internet?
-                    Apa istilah kunci yang penting?
-                    """
+                tool_name="sequentialThinking", 
+                parameters={
+                    "thought": f"Analisis query: {query}",
+                    "thoughtNumber": 1,
+                    "totalThoughts": 1,
+                    "nextThoughtNeeded": False
                 }
             )
 
@@ -343,15 +313,11 @@ class SearchSpecialistAgent:
 
                 # Gunakan pendekatan ReAct untuk mengevaluasi hasil
                 evaluation_result = await call_sequential_thinking_tool(
-                    "think",
+                    "sequentialThinking",
                     {
-                        "input": f"""
-                        Berikut adalah hasil pencarian internet untuk query: "{query}"
-
-                        {formatted_results}
-
-                        Evaluasi apakah hasil ini relevan dan cukup untuk menjawab pertanyaan.
-                        """
+                        "thought": f"Evaluasi apakah hasil pencarian internet untuk query: '{query}' ini relevan.", # <--- Gunakan key 'thought' bukan 'input'
+                        "thoughtNumber": 2,
+                        "totalThoughts": 2
                     }
                 )
 

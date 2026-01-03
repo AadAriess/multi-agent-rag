@@ -7,21 +7,50 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+import asyncio
 
 from app.core.config import config, settings
-from app.llms.core.mcp.mcp_client import sync_initialize_mcp_client
+from app.llms.core.mcp.mcp_client import get_mcp_client, sync_initialize_mcp_client
 from app.llms.core import run_mcp_server_in_background
 
+# Setup Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Jalankan MCP server di background
-    run_mcp_server_in_background()
-    # Tunggu sebentar agar MCP server siap sebelum inisialisasi client
-    time.sleep(3)
-    # Initialize MCP client
-    sync_initialize_mcp_client()
-    yield
+    """
+    Mengelola lifecycle aplikasi:
+    1. Menjalankan Server MCP (FastMCP SSE + npx thinking)
+    2. Menghubungkan Client ke server-server tersebut
+    3. Cleanup saat aplikasi dimatikan
+    """
+    try:
+        # Menjalankan MCP server di background
+        logger.info("Initializing MCP Infrastructure...")
+        run_mcp_server_in_background()
+        
+        # Jeda asinkron (tidak memblokir request lain)
+        await asyncio.sleep(3)
+        
+        # Initialize MCP client ganda
+        sync_initialize_mcp_client()
+        logger.info("OriensSpace AI Components Ready.")
+        
+        yield
+    finally:
+        # Cleanup: Tutup koneksi agar tidak ada process npx yang menggantung
+        logger.info("Shutting down OriensSpace AI...")
+        client = await get_mcp_client()
+        if client:
+            # Menggunakan loop asinkron untuk menutup client
+            try:
+                # Jika dalam konteks shutdown, kita bisa paksa tutup
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(client.disconnect())
+            except Exception as e:
+                logger.error(f"Shutdown error: {e}")
 
 
 app = FastAPI(

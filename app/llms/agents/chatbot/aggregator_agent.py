@@ -264,39 +264,34 @@ class AggregatorAgent:
 
             # Gunakan MCP untuk memanggil fungsi sequential thinking
             result = await call_sequential_thinking_tool(
-                "sequentialthinking",
+                "sequentialthinking", 
                 {
-                    "input": f"""
-                    Analisis pertanyaan berikut dan tentukan apakah membutuhkan:
-                    1. Informasi dari sumber internal (seperti kebijakan perusahaan, prosedur, dokumen internal)
-                    2. Informasi dari sumber eksternal (seperti berita terkini, informasi publik, data terbaru)
-                    3. Kombinasi keduanya
-
-                    Pertanyaan: {query}
-
-                    Jawab dengan salah satu: "internal", "external", atau "both"
-                    """
+                    "thought": f"Analisis kebutuhan data untuk query: {query}. Tentukan 'internal', 'external', atau 'both'.",
+                    "thoughtNumber": 1,
+                    "totalThoughts": 1
                 }
             )
 
             logger.info(f"[ANALYZE_QUERY_TYPE] Hasil dari sequential thinking: {result}")
 
             if result and "result" in result:
-                analysis_result = result["result"].strip().lower()
-
-                logger.info(f"[ANALYZE_QUERY_TYPE] Hasil analisis: {analysis_result}")
-
-                # Validasi hasil analisis
-                if analysis_result in ["internal", "external", "both"]:
-                    return analysis_result
-                else:
-                    # Jika server memberikan jawaban tak terduga, kembalikan default
-                    logger.warning(f"Server memberikan jawaban tak terduga: {analysis_result}, menggunakan default 'both'")
+                # MCP Sequential Thinking mengembalikan string yang seringkali berisi JSON
+                analysis_text = result["result"].lower()
+            
+                # Cek kata kunci di dalam teks hasil reasoning
+                if "internal" in analysis_text and "external" in analysis_text:
                     return "both"
-            else:
-                logger.warning("Sequential thinking server tidak memberikan hasil, menggunakan default 'both'")
-                logger.warning(f"Nilai result: {result}")
+                elif "both" in analysis_text:
+                    return "both"
+                elif "internal" in analysis_text:
+                    return "internal"
+                elif "external" in analysis_text:
+                    return "external"
+                
+                logger.warning(f"Keputusan tidak eksplisit di hasil MCP, menggunakan default 'both'")
                 return "both"
+            
+            return "both"
         except Exception as e:
             logger.error(f"Error saat menganalisis jenis query dengan sequential thinking: {e}, menggunakan default 'both'")
             # Jika MCP gagal, kembali ke metode LLM biasa
@@ -437,23 +432,21 @@ class AggregatorAgent:
             try:
                 # Gunakan MCP untuk memanggil fungsi sequential thinking untuk resolusi konflik
                 conflict_resolution = await call_sequential_thinking_tool(
-                    "think",
+                    "sequentialthinking",
                     {
-                        "input": f"""
-                        Berikut adalah dua jawaban untuk pertanyaan: "{state.query}"
-
-                        Jawaban dari sumber internal: {local_response['response'][:200]}...
-
-                        Jawaban dari sumber eksternal: {search_response['response'][:200]}...
-
-                        Bandingkan dan jelaskan perbedaan antara keduanya, lalu tentukan mana yang lebih relevan dan mengapa.
-                        Fokus pada informasi terbaru dan keakuratan data.
-                        """
+                        "thought": (
+                            f"User bertanya: {state.query}. Data internal mengatakan X, internet mengatakan Y. "
+                            "Selesaikan kontradiksi ini dan simpulkan mana yang lebih akurat untuk User. "
+                            "Berikan ringkasan solusi konflik Anda."
+                        ),
+                        "thoughtNumber": 1,
+                        "totalThoughts": 1
                     }
                 )
 
                 if conflict_resolution and "result" in conflict_resolution:
-                    reasoning += f"Conflict Resolution: {conflict_resolution['result']}\n"
+                    # Simpan hasil reasoning agar bisa dibaca oleh LLM final
+                    reasoning += f"Conflict Resolution Insight: {conflict_resolution['result']}\n"
                     conflict_resolved = True
                 else:
                     # Jika sequential thinking tidak memberikan hasil, gunakan logika sederhana
@@ -501,19 +494,25 @@ class AggregatorAgent:
                     context_info += f"Jawaban sebelumnya: {item.get('response', '')}\n"
 
         final_prompt = f"""
-        Kamu adalah asisten AI yang membantu menjawab pertanyaan pengguna. Gunakan informasi dari berbagai sumber berikut untuk menjawab pertanyaan: "{state.query}"
-
-        {context_info}
-
+        Kamu adalah Senior Aggregator Agent yang bertugas menyusun jawaban komprehensif. 
+        Tugasmu adalah menjawab pertanyaan pengguna: "{state.query}" 
+        
+        Gunakan data berikut sebagai referensi:
+        ---
+        KONTEKS PERCAKAPAN SEBELUMNYA:
+        {context_info if context_info else "Tidak ada konteks sebelumnya."}
+        
+        HASIL TEMUAN AGEN SPESIALIS:
         {combined_response}
+        ---
 
-        Berikan jawaban yang:
-        1. Mudah dipahami dan alami seperti percakapan sehari-hari
-        2. Tetap informatif dan akurat
-        3. Gunakan Bahasa Indonesia yang santun namun tidak terlalu kaku
-        4. Jika ada informasi dari percakapan sebelumnya (konteks session), gunakan untuk menjawab dengan lebih relevan
-        5. Jika ada konflik informasi, jelaskan perbedaannya dan beri rekomendasi mana yang lebih relevan
-        6. Format jawaban dalam paragraf naratif, hindari penggunaan format markdown seperti **, #, -, dll kecuali memang diperlukan untuk klaritas
+        INSTRUKSI KETAT PENYUSUNAN JAWABAN:
+        1. VALIDASI RELEVANSI: Periksa setiap temuan agen. Jika ada dokumen (misal: peraturan pemerintah/Permenhan) yang sama sekali tidak relevan dengan topik pertanyaan (misal: fisika kuantum), ABAIKAN dokumen tersebut. Jangan memaksakan menghubungkan informasi yang tidak berhubungan.
+        2. PRIORITAS SUMBER: Jika pertanyaan bersifat umum/ilmiah, prioritaskan temuan dari 'External Search'. Jika pertanyaan bersifat prosedural/aturan internal, prioritaskan 'Internal Knowledge Base'.
+        3. GAYA BAHASA: Berikan jawaban yang mudah dipahami dan alami seperti percakapan sehari-hari. Gunakan Bahasa Indonesia yang santun namun tidak kaku.
+        4. PENANGANAN KONFLIK: Jika ada perbedaan data antara sumber internal dan eksternal, jelaskan perbedaannya secara transparan dan berikan rekomendasi mana yang lebih akurat untuk situasi pengguna.
+        5. FORMAT: Jawab dalam paragraf naratif yang mengalir. Hindari penggunaan markdown berlebihan seperti banyak simbol **, #, atau list peluru (-) kecuali sangat diperlukan untuk kejelasan poin.
+        6. KONTEKS: Gunakan riwayat percakapan sebelumnya untuk memberikan jawaban yang lebih personal dan nyambung dengan diskusi sebelumnya.
 
         Jawaban:
         """
@@ -549,8 +548,7 @@ class AggregatorAgent:
         # Gunakan mekanisme sinkronisasi sederhana:
         # Aggregator akan menunggu kedua agen selesai sebelum dijalankan
         # Kita akan menggabungkan hasil dari kedua agen ke aggregator
-        graph.add_edge("local_agent", "aggregator")
-        graph.add_edge("search_agent", "aggregator")
+        graph.add_edge(["local_agent", "search_agent"], "aggregator")
 
         # Tambahkan edge dari aggregator ke END
         graph.add_edge("aggregator", END)
