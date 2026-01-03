@@ -24,6 +24,7 @@ dependencies = [
     "python-dotenv",
     "langchain",
     "langchain-community",
+    "langchain-openai",
     "langchain-core",
     "langchain-text-splitters",
     "qdrant-client",
@@ -52,7 +53,7 @@ dependencies = [
     "langchain-ollama",
     "requests",
     "mcp",
-    "starlette"
+    "starlette",
 ]
 
 [project.optional-dependencies]

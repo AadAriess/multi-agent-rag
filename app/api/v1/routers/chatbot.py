@@ -69,6 +69,9 @@ async def chat_completions(request: ChatCompletionRequest, db: Session = Depends
         query = request.messages[-1].content if request.messages else ""
 
         # Buat session_id dan user_id jika tidak ada
+        """
+        session_id : bisa diisi dengan channel id atau jika individu diisi dengan user_id ?
+        """
         session_id = request.session_id or str(uuid4())
         user_id = request.user_id or str(uuid4())
 
